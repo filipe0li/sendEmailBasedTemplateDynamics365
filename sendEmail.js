@@ -1,24 +1,35 @@
 const getEnvironmentVariableValue = (variableName) => {
+    const entityName = "environmentvariablevalue";
+    const fetchXml = `?fetchXml=
+            <fetch version='1.0' output-format='xml-platform' mapping='logical' distinct='false' top='1' no-lock='true'>
+              <entity name='${entityName}'>
+                <attribute name='value' />
+                <link-entity name='environmentvariabledefinition' from='environmentvariabledefinitionid' to='environmentvariabledefinitionid' link-type='inner' alias='definition'>
+                  <attribute name='defaultvalue' />
+                  <filter type='and'>
+                    <condition attribute='schemaname' operator='eq' value='${variableName}' />
+                  </filter>
+                </link-entity>
+              </entity>
+            </fetch>`;
     return new Promise(
         (resolve, reject) => {
-            const STATECODE_ACTIVE = 0;
-            const query = `?$select=defaultvalue&$expand=environmentvariabledefinition_environmentvariablevalue($select=value;$filter=(statecode eq ${STATECODE_ACTIVE}))&$filter=(statecode eq ${STATECODE_ACTIVE} and displayname eq '${variableName}') and (environmentvariabledefinition_environmentvariablevalue/any(o1:(o1/statecode eq ${STATECODE_ACTIVE})))&$top=1`;
-            Xrm.WebApi.retrieveMultipleRecords("environmentvariabledefinition", query).then(
+            Xrm.WebApi.retrieveMultipleRecords(entityName, encodeURI(fetchXml)).then(
                 (data) => {
                     if (data.entities.length > 0) {
-                        if (data.entities[0].environmentvariabledefinition_environmentvariablevalue[0].value) {
-                            resolve(data.entities[0].environmentvariabledefinition_environmentvariablevalue[0].value);
+                        if (data.entities[0].value) {
+                            resolve(data.entities[0].value);
                         }
-                        else if (data.entities[0].defaultvalue) {
+                        else if (data.entities[0]["definition.defaultvalue"]) {
                             console.log("Get by default value!");
-                            resolve(data.entities[0].defaultvalue);
+                            resolve(data.entities[0]["definition.defaultvalue"]);
                         }
                         else {
-                            reject(`ERROR: Environment variable called ${variableName} not defined!`);
+                            reject({ message: `Environment variable called ${variableName} not defined!` });
                         }
                     }
                     else {
-                        reject(`ERROR: Environment variable called ${variableName} not found!`);
+                        reject({ message: `Environment variable called ${variableName} not found!` });
                     }
                 })
                 .catch((error) => {
@@ -27,10 +38,9 @@ const getEnvironmentVariableValue = (variableName) => {
         });
 };
 
-const getEmailTemplate = (entity, entityId) => {
+const getEmailTemplate = (entity, entityId, templateId) => {
     return new Promise(
         (resolve, reject) => {
-            const templateId = "4a062d33-a6e5-1046-8195-ae46fc8f5a30";
             const body = {
                 TemplateId: templateId,
                 ObjectType: entity,
@@ -71,8 +81,8 @@ const sendEmailByPowerAutomate = (body) => {
     */
     return new Promise(
         (resolve, reject) => {
-            const sendEmailEnvironmentName = "url_flow_send_email";
-            getEnvironmentVariableValue(sendEmailEnvironmentName)
+            const variableName = "cr6c5_url_flow_send_email";
+            getEnvironmentVariableValue(variableName)
                 .then((url) => {
                     const params = {
                         method: "POST",
@@ -84,7 +94,13 @@ const sendEmailByPowerAutomate = (body) => {
                     fetch(url, params)
                         .then(response => response.json())
                         .then(data => {
-                            resolve(data);
+                            console.log(data);
+                            if (data.error) {
+                                reject(data.error);
+                            }
+                            else {
+                                resolve(data);
+                            }
                         })
                         .catch((error) => {
                             reject(error);
@@ -96,25 +112,97 @@ const sendEmailByPowerAutomate = (body) => {
         });
 };
 
-const sendEmailBasedTemplate = (entity, entityId) => {
-    getEmailTemplate(entity, entityId)
-        .then((data) => {
-            const body = {
-                to: "test@test.com",
-                cc: "",
-                subject: data.value[0].subject,
-                html: data.value[0].description
-            };
-            return sendEmailByPowerAutomate(body);
+const getContactEmailById = (id) => {
+    const entityName = "contact";
+    const fetchXml = `?fetchXml=
+            <fetch version='1.0' output-format='xml-platform' mapping='logical' distinct='false' top='1' no-lock='true'>
+              <entity name='${entityName}'>
+                <attribute name='emailaddress1' alias='email' />
+                <filter type='and'>
+                  <condition attribute='contactid' operator='eq' value='${id}'/>
+                  <condition attribute='emailaddress1' operator='not-null' />
+                </filter>
+              </entity>
+            </fetch>`;
+    return new Promise(
+        (resolve, reject) => {
+            Xrm.WebApi.retrieveMultipleRecords(entityName, encodeURI(fetchXml)).then(
+                (data) => {
+                    if (data.entities.length > 0) {
+                        resolve(data.entities[0].email);
+                    }
+                    else {
+                        reject({ message: `The contact id ${id}, does not have an email!` });
+                    }
+                })
+                .catch((error) => {
+                    reject(error);
+                });
+        });
+}
+
+const getUserEmail = () => {
+    const id = Xrm.Utility.getGlobalContext().userSettings.userId;
+    const entityName = "systemuser";
+    const fetchXml = `?fetchXml=
+            <fetch version='1.0' output-format='xml-platform' mapping='logical' distinct='false' top='1' no-lock='true'>
+              <entity name='${entityName}'>
+                <attribute name='internalemailaddress' alias='email' />
+                <filter type='and'>
+                  <condition attribute='systemuserid' operator='eq' value='${id}'/>
+                  <condition attribute='internalemailaddress' operator='not-null' />
+                </filter>
+              </entity>
+            </fetch>`;
+    return new Promise(
+        (resolve, reject) => {
+            Xrm.WebApi.retrieveMultipleRecords(entityName, encodeURI(fetchXml)).then(
+                (data) => {
+                    if (data.entities.length > 0) {
+                        resolve(data.entities[0].email);
+                    }
+                    else {
+                        reject({ message: `The user id ${id}, does not have an email!` });
+                    }
+                })
+                .catch((error) => {
+                    reject(error);
+                });
+        });
+}
+
+const sendEmailToContact = (id) => {
+    getContactEmailById(id)
+        .then((email) => {
+            getUserEmail()
+            .then((userEmail) => {
+                getEmailTemplate("contact", id, "4a062d33-a6e5-1046-8195-ae46fc8f5a30")
+                .then((data) => {
+                    const body = {
+                        to: email,
+                        cc: userEmail,
+                        subject: data.value[0].subject,
+                        html: data.value[0].description
+                    };
+                    sendEmailByPowerAutomate(body)
+                        .then((data) => {
+                            console.log(data.isSuccess);
+                        })
+                        .catch((error) => {
+                            console.log(`ERROR when sending email from Power Automate: ${error.message}`);
+                        });
+                })
+                .catch((error) => {
+                    console.log(`ERROR getting email template: ${error.message}`);
+                });
+            })
+            .catch((error) => {
+                console.log(`ERROR getting user email: ${error.message}`);
+            });
         })
-        .then(
-            (isSucessful) => {
-                console.log(isSucessful);
-            }
-        )
         .catch((error) => {
-            console.log(error.message);
+            console.log(`ERROR getting contact email: ${error.message}`);
         });
 };
 
-sendEmailBasedTemplate("contact", "9fd4a450-cb0c-ea11-a813-000d3a1b1223");
+sendEmailToContact("9fd4a450-cb0c-ea11-a813-000d3a1b1223");
